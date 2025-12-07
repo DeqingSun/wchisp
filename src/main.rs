@@ -39,6 +39,10 @@ struct Cli {
     #[arg(long, short, ignore_case = true, value_enum, requires = "serial")]
     baudrate: Option<Baudrate>,
 
+    /// Retry scan for certain seconds, helpful on slow USB devices
+    #[arg(long, short, default_value = "0")]
+    retry: u32,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -93,6 +97,8 @@ enum ConfigCommands {
     Reset {},
     /// Enable SWD mode(simulation mode)
     EnableDebug {},
+    /// Disable SWD mode(simulation mode)
+    DisableDebug {},
     /// Set config register to new value
     Set {
         /// New value of the config register
@@ -139,6 +145,29 @@ fn main() -> Result<()> {
             simplelog::TerminalMode::Mixed,
             simplelog::ColorChoice::Auto,
         );
+    }
+
+    if cli.retry > 0 {
+        if !cli.usb && !cli.serial {
+            log::warn!("No transport method specified (--usb or --serial); skipping retry logic.");
+        } else {
+            log::info!("Retrying scan for {} seconds", cli.retry);
+            let start_time = std::time::Instant::now();
+            while start_time.elapsed().as_secs() < cli.retry as u64 {
+                if cli.usb {
+                    let ndevices = UsbTransport::scan_devices()?;
+                    if ndevices > 0 {
+                        break;
+                    }
+                } else if cli.serial {
+                    let ports = SerialTransport::scan_ports()?;
+                    if !ports.is_empty() {
+                        break;
+                    }
+                }
+                sleep(Duration::from_millis(100));
+            }
+        }
     }
 
     match &cli.command {
@@ -323,6 +352,10 @@ fn main() -> Result<()> {
                 Some(ConfigCommands::EnableDebug {}) => {
                     flashing.enable_debug()?;
                     log::info!("Debug mode enabled");
+                }
+                Some(ConfigCommands::DisableDebug {}) => {
+                    flashing.disable_debug()?;
+                    log::info!("Debug mode disabled");
                 }
                 Some(ConfigCommands::Set { value }) => {
                     // flashing.write_config(value)?;
